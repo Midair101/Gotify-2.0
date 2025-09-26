@@ -1,6 +1,5 @@
 import streamlit as st
 import time
-from utils.audio_manager import AudioManager
 
 def render_player():
     """Render the music player component"""
@@ -12,18 +11,26 @@ def render_player():
     
     track = st.session_state.current_track
     audio_manager = st.session_state.audio_manager
+
+    # Handle song finishing
+    if st.session_state.get('song_finished', False):
+        st.session_state.song_finished = False # Reset flag
+        next_track(autoplay=True) # Move to next track
+        st.rerun()
     
     # Track information
     col1, col2 = st.columns([1, 3])
     
     with col1:
-        # Album art placeholder (using emoji as we can't generate images)
-        st.markdown("### 🎵")
+        album_art_url = track.get('album_art') or track.get('thumbnail')
+        if album_art_url:
+            st.image(album_art_url, width=100)
+        else:
+            st.markdown("### 🎵")
     
     with col2:
         st.markdown(f"**{track.get('title', 'Unknown Title')}**")
         st.markdown(f"*{track.get('artist', 'Unknown Artist')}*")
-        st.markdown(f"Album: {track.get('album', 'Unknown Album')}")
     
     # Player controls
     col1, col2, col3, col4, col5 = st.columns(5)
@@ -38,7 +45,7 @@ def render_player():
                 pause_track()
         else:
             if st.button("▶️", help="Play"):
-                play_track()
+                play_track(resume=True)
     
     with col3:
         if st.button("⏭️", help="Next track"):
@@ -49,16 +56,45 @@ def render_player():
             shuffle_playlist()
     
     with col5:
-        if st.button("🔁", help="Repeat"):
+        repeat_mode = st.session_state.get('repeat_mode', 'off')
+        repeat_icons = {'off': '🔁', 'playlist': '🔁', 'track': '🔂'}
+        repeat_colors = {'off': 'grey', 'playlist': 'green', 'track': 'green'}
+        st.markdown(f"""
+        <div style="text-align: center; font-size: 24px; color: {repeat_colors[repeat_mode]};">
+            {repeat_icons[repeat_mode]}
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("Repeat", key="repeat_button_hidden", help="Toggle Repeat (Off -> Playlist -> Track)"):
             toggle_repeat()
     
-    # Progress bar (simulated)
+    # Progress bar and seeking
+    position = audio_manager.get_position()
+    duration_ms = audio_manager.get_duration()
+
+    if duration_ms > 0:
+        # Display timestamps
+        current_time_str = format_duration(position * duration_ms)
+        total_time_str = format_duration(duration_ms)
+        
+        # Use a slider for seeking
+        new_position = st.slider(
+            "Track Progress", 0.0, 1.0, position,
+            label_visibility="collapsed", key="seek_slider",
+            on_change=lambda: audio_manager.set_position(st.session_state.seek_slider)
+        )
+        
+        st.markdown(f"<div style='display: flex; justify-content: space-between; font-size: 0.9em; color: grey;'><p>{current_time_str}</p><p>{total_time_str}</p></div>", unsafe_allow_html=True)
+
+        if abs(new_position - position) > 0.01 and not st.session_state.is_playing:
+            audio_manager.set_position(new_position)
+            st.rerun()
+    else:
+        st.progress(0)
+
+    # To make the progress bar and seeking feel "live", force a rerun if playing.
     if st.session_state.is_playing:
-        progress = st.progress(0.0)
-        # In a real implementation, this would show actual playback progress
-        for i in range(100):
-            progress.progress(i / 100)
-            time.sleep(0.01)
+        time.sleep(0.5) # Update roughly twice a second
+        st.rerun()
     
     # Playlist queue
     if st.session_state.current_playlist:
@@ -73,28 +109,60 @@ def render_player():
                     st.session_state.current_track_index = i
                     st.session_state.current_track = queue_track
                     play_track()
+ 
+def format_duration(ms: int) -> str:
+    """Formats duration in milliseconds to MM:SS"""
+    if ms is None or ms < 0:
+        return "00:00"
+    seconds = int((ms / 1000) % 60)
+    minutes = int((ms / (1000 * 60)) % 60)
+    return f"{minutes:02d}:{seconds:02d}"
 
-def play_track():
-    """Play the current track"""
+def play_track(resume=False):
+    """Play the current track, or resume if paused."""
     if st.session_state.current_track:
         track = st.session_state.current_track
-        st.session_state.audio_manager.play(track)
+        audio_manager = st.session_state.audio_manager
+
+        if resume and not audio_manager.player.is_playing():
+            audio_manager.resume()
+        else:
+            audio_manager.play_track(track)
+        st.success(f"Playing: {track.get('title', 'Unknown')}")
+        
+        # Optimistically update the UI and rerun
         st.session_state.is_playing = True
-        st.success(f"Now playing: {track.get('title', 'Unknown')}")
+        st.rerun()
 
 def pause_track():
     """Pause the current track"""
     st.session_state.audio_manager.pause()
     st.session_state.is_playing = False
     st.info("Playback paused")
+    st.rerun()
 
-def next_track():
+def next_track(autoplay=False):
     """Skip to next track in playlist"""
     if st.session_state.current_playlist:
         current_index = st.session_state.current_track_index
-        if current_index < len(st.session_state.current_playlist) - 1:
-            st.session_state.current_track_index = current_index + 1
-            st.session_state.current_track = st.session_state.current_playlist[current_index + 1]
+        playlist_len = len(st.session_state.current_playlist)
+        repeat_mode = st.session_state.get('repeat_mode', 'off')
+
+        next_index = current_index + 1
+
+        if repeat_mode == 'track' and autoplay:
+            # Replay the same track
+            play_track()
+            return
+
+        if next_index < playlist_len:
+            st.session_state.current_track_index = next_index
+            st.session_state.current_track = st.session_state.current_playlist[next_index]
+            play_track()
+        elif repeat_mode == 'playlist':
+            # Loop back to the start
+            st.session_state.current_track_index = 0
+            st.session_state.current_track = st.session_state.current_playlist[0]
             play_track()
         else:
             st.warning("End of playlist")
@@ -127,9 +195,15 @@ def shuffle_playlist():
 
 def toggle_repeat():
     """Toggle repeat mode"""
-    if not hasattr(st.session_state, 'repeat_mode'):
-        st.session_state.repeat_mode = False
+    modes = ['off', 'playlist', 'track']
+    current_mode = st.session_state.get('repeat_mode', 'off')
+    try:
+        current_index = modes.index(current_mode)
+        next_index = (current_index + 1) % len(modes)
+        st.session_state.repeat_mode = modes[next_index]
+    except ValueError:
+        st.session_state.repeat_mode = 'off'
     
-    st.session_state.repeat_mode = not st.session_state.repeat_mode
-    mode = "ON" if st.session_state.repeat_mode else "OFF"
-    st.info(f"Repeat mode: {mode}")
+    mode_text = st.session_state.repeat_mode.replace('_', ' ').title()
+    st.toast(f"Repeat mode: {mode_text}")
+    st.rerun()

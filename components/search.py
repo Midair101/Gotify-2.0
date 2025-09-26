@@ -15,28 +15,31 @@ def render_search():
             st.rerun()
         return
     
-    # Search input
-    search_query = st.text_input(
-        "Search for songs, artists, or albums",
-        placeholder="Enter your search query...",
-        help="Search across Spotify and YouTube for music"
-    )
-    
-    # Search options
-    col1, col2 = st.columns(2)
-    with col1:
-        search_spotify = st.checkbox("🎵 Search Spotify", value=True)
-    with col2:
-        search_youtube = st.checkbox("📺 Search YouTube", value=True)
-    
-    if search_query and st.button("🔍 Search", type="primary"):
-        with st.spinner("Searching for music..."):
-            search_results = perform_search(search_query, search_spotify, search_youtube)
-            
-            if search_results:
-                display_search_results(search_results)
-            else:
-                st.warning("No results found. Try a different search term.")
+    if 'search_results' not in st.session_state:
+        st.session_state.search_results = None
+
+    with st.form(key="search_form"):
+        search_query = st.text_input(
+            "Search for songs, artists, or albums",
+            placeholder="Enter your search query and press Enter...",
+            help="Search across Spotify and YouTube for music"
+        )
+        
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            search_spotify = st.checkbox("🎵 Spotify", value=True)
+        with col2:
+            search_youtube = st.checkbox("📺 YouTube", value=True)
+        
+        # The form is submitted when the user presses Enter in the text_input.
+        if st.form_submit_button("Search", use_container_width=True, type="primary"):
+            if search_query:
+                with st.spinner("Searching for music..."):
+                    st.session_state.search_results = perform_search(search_query, search_spotify, search_youtube)
+
+    if st.session_state.search_results:
+        display_search_results(st.session_state.search_results)
+
 
 def perform_search(query, include_spotify=True, include_youtube=True):
     """Perform search across selected platforms"""
@@ -49,8 +52,11 @@ def perform_search(query, include_spotify=True, include_youtube=True):
     if include_spotify:
         try:
             spotify_client = SpotifyClient()
-            spotify_results = spotify_client.search(query)
-            results['spotify'] = spotify_results
+            if spotify_client.is_configured:
+                spotify_results = spotify_client.search(query)
+                results['spotify'] = spotify_results
+            else:
+                st.warning("Spotify credentials are not configured. Please set `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` environment variables to enable Spotify search.")
         except Exception as e:
             st.error(f"Spotify search failed: {str(e)}")
     
@@ -127,81 +133,112 @@ def display_track_card(track, source):
         
         with col4:
             if st.button("➕", key=f"add_{track.get('id', hash(str(track)))}", help="Add to playlist"):
-                add_track_to_playlist(track, source)
+                # Set the track to be added in session state to show the form
+                st.session_state.track_to_add = track.get('id', hash(str(track)))
+                st.rerun()
         
         st.divider()
 
-def play_track_from_search(track, source):
+    # If a track is selected to be added, show the form
+    if st.session_state.get('track_to_add') == track.get('id', hash(str(track))):
+        add_track_to_playlist_form(track, source)
+
+
+def play_track_from_search(track, source, add_to_queue=False):
     """Play a track from search results"""
     try:
-        # Convert search result to playable track format
-        playable_track = {
-            'title': track.get('title', 'Unknown Title'),
-            'artist': track.get('artist', 'Unknown Artist'),
-            'album': track.get('album', 'Unknown Album'),
-            'url': track.get('url', ''),
-            'source': source,
-            'id': track.get('id')
-        }
-        
-        # If it's from YouTube, get the stream URL
-        if source == "youtube":
-            youtube_client = YouTubeClient()
-            stream_url = youtube_client.get_stream_url(track.get('url', ''))
-            playable_track['stream_url'] = stream_url
-        
-        # Set as current track and play
-        st.session_state.current_track = playable_track
-        st.session_state.current_playlist = [playable_track]
-        st.session_state.current_track_index = 0
-        st.session_state.is_playing = True
-        
-        st.success(f"Now playing: {playable_track['title']} by {playable_track['artist']}")
-        
+        playable_track = None
+
+        if source == 'spotify':
+            with st.spinner(f"Finding '{track.get('title')}' on YouTube..."):
+                # For Spotify, find the equivalent on YouTube to stream
+                youtube_client = YouTubeClient()
+                query = f"{track.get('title')} {track.get('artist')}"
+                yt_results = youtube_client.search(query, max_results=1)
+
+                if yt_results:
+                    yt_track = yt_results[0]
+                    playable_track = {
+                        'title': track.get('title'), # Keep original Spotify metadata
+                        'artist': track.get('artist'),
+                        'album': track.get('album'),
+                        'id': yt_track.get('id'), # Use YouTube ID for streaming
+                        'source': 'youtube', # Source is now youtube for playback
+                        'album_art': track.get('album_art') or yt_track.get('thumbnail')
+                    }
+                    st.info(f"Found on YouTube: '{yt_track.get('title')}'")
+                else:
+                    st.error("Could not find a matching track on YouTube to play.")
+                    return
+        elif source == 'youtube':
+            # It's already a YouTube track, just format it
+            playable_track = {
+                **track,
+                'album_art': track.get('thumbnail')
+            }
+
+
+        if playable_track:
+            st.session_state.current_track = playable_track
+            st.session_state.current_playlist = [playable_track]
+            st.session_state.current_track_index = 0
+            st.session_state.audio_manager.play_track(playable_track)
+            st.success(f"Now playing: {playable_track['title']} by {playable_track['artist']}")
+
     except Exception as e:
         st.error(f"Failed to play track: {str(e)}")
 
-def add_track_to_playlist(track, source):
-    """Add track to a user playlist"""
-    
-    # Convert to standard track format
-    track_data = {
-        'title': track.get('title', 'Unknown Title'),
-        'artist': track.get('artist', 'Unknown Artist'),
-        'album': track.get('album', 'Unknown Album'),
-        'url': track.get('url', ''),
-        'source': source,
-        'id': track.get('id'),
-        'added_date': str(st.session_state.get('current_time', ''))
-    }
-    
-    # Show playlist selection
+def add_track_to_playlist_form(track, source):
+    """Display a form to add a track to a playlist."""
     playlist_names = list(st.session_state.playlists.keys())
-    
+
     if not playlist_names:
         st.warning("No playlists found. Create a playlist first.")
+        if st.button("Cancel", key=f"cancel_add_{track.get('id')}"):
+            del st.session_state.track_to_add
+            st.rerun()
         return
-    
-    # Create a form for playlist selection
+
     with st.form(f"add_to_playlist_{track.get('id', hash(str(track)))}"):
         selected_playlist = st.selectbox(
             "Select playlist",
             playlist_names,
             key=f"playlist_select_{track.get('id', hash(str(track)))}"
         )
-        
-        if st.form_submit_button("Add to Playlist"):
+
+        col1, col2 = st.columns(2)
+        with col1:
+            submitted = st.form_submit_button("✅ Add to Playlist")
+        with col2:
+            cancelled = st.form_submit_button("❌ Cancel")
+
+        if submitted:
+            track_data = {
+                'title': track.get('title', 'Unknown Title'),
+                'artist': track.get('artist', 'Unknown Artist'),
+                'album': track.get('album', 'Unknown Album'),
+                'id': track.get('id'),
+                'source': source,
+                'album_art': track.get('album_art') or track.get('thumbnail')
+            }
+
             if selected_playlist not in st.session_state.playlists:
                 st.session_state.playlists[selected_playlist] = []
-            
-            # Check if track already exists in playlist
+
             track_exists = any(
-                existing_track.get('id') == track_data.get('id') 
+                existing_track.get('id') == track_data.get('id')
                 for existing_track in st.session_state.playlists[selected_playlist]
             )
-            
+
             if not track_exists:
                 st.session_state.playlists[selected_playlist].append(track_data)
                 st.success(f"Added '{track_data['title']}' to '{selected_playlist}'")
             else:
                 st.warning("Track already exists in this playlist")
+            
+            del st.session_state.track_to_add
+            st.rerun()
+        
+        if cancelled:
+            del st.session_state.track_to_add
+            st.rerun()

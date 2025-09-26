@@ -79,12 +79,25 @@ def main():
     .sidebar .sidebar-content {
         background-color: #0e1118;
     }
+    .fixed-player {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        background-color: #0e1118;
+        padding: 1rem 2rem;
+        border-top: 1px solid #2a2a2a;
+        z-index: 999;
+    }
+    .main-content {
+        padding-bottom: 150px; /* Add padding to prevent player overlap */
+    }
     </style>
     """, unsafe_allow_html=True)
     
     # Header
     st.markdown("""
-    <div class="main-header">
+    <div class="main-header main-content">
         <h1 style="color: white; margin: 0;">🎵 Gotify</h1>
         <p style="color: white; margin: 0; opacity: 0.8;">Your personal music streaming experience</p>
     </div>
@@ -135,6 +148,7 @@ def main():
             st.session_state.audio_manager.set_volume(new_volume)
     
     # Main content area
+    st.markdown('<div class="main-content">', unsafe_allow_html=True)
     if st.session_state.page == "🏠 Home":
         render_home()
     elif st.session_state.page == "🔍 Search":
@@ -143,10 +157,12 @@ def main():
         render_library()
     elif st.session_state.page == "📝 Playlists":
         render_playlists()
+    st.markdown('</div>', unsafe_allow_html=True)
     
     # Always show player at bottom
-    st.divider()
+    st.markdown('<div class="fixed-player">', unsafe_allow_html=True)
     render_player()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 def render_home():
     """Render the home page with recently played and recommendations"""

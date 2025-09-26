@@ -15,6 +15,10 @@ class SpotifyClient:
         if self.client_id and self.client_secret:
             self._get_access_token()
     
+    @property
+    def is_configured(self) -> bool:
+        return bool(self.client_id and self.client_secret)
+    
     def _get_access_token(self):
         """Get access token using client credentials flow"""
         try:

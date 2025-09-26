@@ -1,138 +1,112 @@
-import os
-import pygame
 from pathlib import Path
+import vlc
+import yt_dlp
+import streamlit as st
 
 class AudioManager:
-    """Manages audio playback using pygame"""
-    
+    """Manages audio playback using python-vlc."""
+
     def __init__(self):
-        self.is_initialized = False
-        self.current_file = None
-        self.is_playing = False
-        self.is_paused = False
-        self.volume = 0.7
-        self.position = 0
+        self.instance = vlc.Instance()
+        self.player = self.instance.media_player_new()
+        self.track_info = None
         
-        self._initialize_pygame()
-    
-    def _initialize_pygame(self):
-        """Initialize pygame mixer for audio playback"""
+        # Event handling
+        self.event_manager = self.player.event_manager()
+        self.event_manager.event_attach(vlc.EventType.MediaPlayerEndReached, self.song_finished_callback)
+        self.event_manager.event_attach(vlc.EventType.MediaPlayerPlaying, lambda e: self.update_playing_state(True))
+        self.event_manager.event_attach(vlc.EventType.MediaPlayerPaused, lambda e: self.update_playing_state(False))
+
+    def _get_youtube_stream_url(self, video_id):
+        """Get the best audio stream URL from a YouTube video ID."""
+        if not video_id:
+            return None
+
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'quiet': True,
+            'no_warnings': True,
+            'force_generic_extractor': True,
+        }
         try:
-            pygame.mixer.pre_init(frequency=22050, size=-16, channels=2, buffer=512)
-            pygame.mixer.init()
-            self.is_initialized = True
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
+                return info['url']
         except Exception as e:
-            print(f"Failed to initialize audio: {e}")
-            self.is_initialized = False
-    
-    def play(self, track):
-        """Play a track"""
-        if not self.is_initialized:
-            print("Audio system not initialized")
-            return False
-        
-        try:
-            # Handle different track sources
-            if track.get('source') == 'local':
-                file_path = track.get('file_path')
-                if file_path and Path(file_path).exists():
-                    return self._play_local_file(file_path)
-                else:
-                    print(f"Local file not found: {file_path}")
-                    return False
-            
-            elif track.get('source') in ['youtube', 'spotify']:
-                # For online tracks, we would need to get the stream URL
-                stream_url = track.get('stream_url')
-                if stream_url:
-                    return self._play_stream(stream_url)
-                else:
-                    print("No stream URL available")
-                    return False
-            
-            return False
-            
-        except Exception as e:
-            print(f"Error playing track: {e}")
-            return False
-    
-    def _play_local_file(self, file_path):
-        """Play a local audio file"""
-        try:
-            pygame.mixer.music.load(file_path)
-            pygame.mixer.music.set_volume(self.volume)
-            pygame.mixer.music.play()
-            
-            self.current_file = file_path
-            self.is_playing = True
-            self.is_paused = False
-            
-            return True
-            
-        except Exception as e:
-            print(f"Error playing local file: {e}")
-            return False
-    
-    def _play_stream(self, stream_url):
-        """Play an online stream (placeholder implementation)"""
-        # In a real implementation, this would handle streaming audio
-        # For now, we'll just indicate that streaming is not fully implemented
-        print(f"Streaming not implemented for: {stream_url}")
-        return False
-    
+            st.error(f"Error getting audio stream: {e}")
+            return None
+
+    def play_track(self, track):
+        """Play a track, fetching stream URL if it's from YouTube."""
+        self.stop()
+        if not track:
+            st.warning("No track provided to play.")
+            return
+
+        self.track_info = track
+        source_type = track.get('source', 'local')
+        media = None
+
+        if source_type == 'youtube' and track.get('id'):
+            stream_url = self._get_youtube_stream_url(track.get('id'))
+            if stream_url:
+                media = self.instance.media_new(stream_url)
+        elif source_type == 'local' and track.get('file_path'):
+            file_path = Path(track['file_path'])
+            if file_path.exists():
+                media = self.instance.media_new(str(file_path))
+            else:
+                st.error(f"Local file not found: {file_path}")
+        else:
+            st.warning(f"Playback for source type '{source_type}' is not implemented.")
+
+        if media:
+            self.player.set_media(media)
+            self.player.play()
+            st.session_state.is_playing = True
+        else:
+            st.session_state.is_playing = False
+
     def pause(self):
-        """Pause playback"""
-        if self.is_initialized and self.is_playing:
-            pygame.mixer.music.pause()
-            self.is_paused = True
-            self.is_playing = False
-    
+        if self.player.is_playing():
+            self.player.pause()
+            st.session_state.is_playing = False
+
     def resume(self):
-        """Resume playback"""
-        if self.is_initialized and self.is_paused:
-            pygame.mixer.music.unpause()
-            self.is_paused = False
-            self.is_playing = True
-    
+        if not self.player.is_playing():
+            self.player.play()
+            st.session_state.is_playing = True
+
     def stop(self):
-        """Stop playback"""
-        if self.is_initialized:
-            pygame.mixer.music.stop()
-            self.is_playing = False
-            self.is_paused = False
-            self.current_file = None
-    
+        self.player.stop()
+        st.session_state.is_playing = False
+
     def set_volume(self, volume):
-        """Set playback volume (0.0 to 1.0)"""
-        self.volume = max(0.0, min(1.0, volume))
-        if self.is_initialized:
-            pygame.mixer.music.set_volume(self.volume)
-    
-    def get_volume(self):
-        """Get current volume"""
-        return self.volume
-    
-    def is_busy(self):
-        """Check if audio is currently playing"""
-        if self.is_initialized:
-            return pygame.mixer.music.get_busy()
-        return False
-    
+        """Set volume from 0.0 to 1.0"""
+        self.player.audio_set_volume(int(volume * 100))
+
     def get_position(self):
-        """Get current playback position (placeholder)"""
-        # pygame doesn't provide easy position tracking
-        # In a real implementation, you might use a different library
-        return self.position
-    
+        """Get current playback position (0.0 to 1.0)."""
+        return self.player.get_position()
+
+    def get_duration(self):
+        """Get total duration of the track in milliseconds."""
+        return self.player.get_length()
+
     def set_position(self, position):
-        """Set playback position (placeholder)"""
-        # pygame doesn't support seeking easily
-        # In a real implementation, you might use a different library
-        self.position = position
-    
-    def cleanup(self):
-        """Clean up audio resources"""
-        if self.is_initialized:
-            pygame.mixer.music.stop()
-            pygame.mixer.quit()
-            self.is_initialized = False
+        """Set playback position (0.0 to 1.0)."""
+        self.player.set_position(position)
+
+    def update_playing_state(self, is_playing):
+        """Callback to update session state based on player events."""
+        st.session_state.is_playing = is_playing
+
+    def song_finished_callback(self, event):
+        """
+        Callback triggered when a song finishes.
+        This will be used to trigger the 'next_track' logic in the UI.
+        We set a flag in the session state that the UI can check on the next rerun.
+        """
+        st.session_state.is_playing = False
+        # Using a flag is a safe way to communicate from a callback thread to Streamlit
+        st.session_state.song_finished = True
