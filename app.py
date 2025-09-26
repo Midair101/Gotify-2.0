@@ -63,50 +63,46 @@ def main():
     # Custom CSS for Spotify-like appearance
     st.markdown("""
     <style>
-    .main-header {
-        background: linear-gradient(135deg, #1db954, #1ed760);
-        padding: 1rem;
-        border-radius: 10px;
-        margin-bottom: 2rem;
+    /* Main app background */
+    .stApp {
+        background-color: #121212;
+        color: #ffffff;
     }
+
+    /* Card for displaying tracks */
     .track-card {
-        background-color: #1a1a1a;
+        background-color: #181818;
         padding: 1rem;
         border-radius: 8px;
         margin: 0.5rem 0;
-        border-left: 3px solid #1db954;
+        transition: background-color 0.2s;
     }
+    .track-card:hover {
+        background-color: #282828;
+    }
+
+    /* Sidebar styling */
     .sidebar .sidebar-content {
-        background-color: #0e1118;
+        background-color: #040404;
     }
-    .fixed-player {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        width: 100%;
-        background-color: #0e1118;
-        padding: 1rem 2rem;
-        border-top: 1px solid #2a2a2a;
-        z-index: 999;
-    }
+
     .main-content {
-        padding-bottom: 150px; /* Add padding to prevent player overlap */
+        /* No longer need padding since player is in sidebar */
     }
+
+    /* Hide the volume slider's value tooltip by targeting its container */
+    .volume-slider-container div[data-testid="stSlider"] > div[data-baseweb="slider"] > div:nth-child(3) {
+        display: none;
+    }
+
     </style>
     """, unsafe_allow_html=True)
     
     # Header
-    st.markdown("""
-    <div class="main-header main-content">
-        <h1 style="color: white; margin: 0;">🎵 Gotify</h1>
-        <p style="color: white; margin: 0; opacity: 0.8;">Your personal music streaming experience</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
     # Sidebar navigation
     with st.sidebar:
         st.title("🎵 Gotify")
-        
+        st.caption("Your personal music streamer")
         # Network status
         if st.session_state.network_connected:
             st.success("🌐 Online")
@@ -139,13 +135,11 @@ def main():
         # Quick stats
         st.metric("Local Tracks", len(st.session_state.local_library.get("tracks", [])))
         st.metric("Playlists", len(st.session_state.playlists))
-        
-        # Volume control
-        st.subheader("🔊 Volume")
-        new_volume = st.slider("Volume", 0.0, 1.0, st.session_state.volume, 0.1, label_visibility="hidden")
-        if new_volume != st.session_state.volume:
-            st.session_state.volume = new_volume
-            st.session_state.audio_manager.set_volume(new_volume)
+
+        # --- Music Player in Sidebar ---
+        st.divider()
+        st.subheader("Now Playing")
+        render_player()
     
     # Main content area
     st.markdown('<div class="main-content">', unsafe_allow_html=True)
@@ -159,10 +153,6 @@ def main():
         render_playlists()
     st.markdown('</div>', unsafe_allow_html=True)
     
-    # Always show player at bottom
-    st.markdown('<div class="fixed-player">', unsafe_allow_html=True)
-    render_player()
-    st.markdown('</div>', unsafe_allow_html=True)
 
 def render_home():
     """Render the home page with recently played and recommendations"""

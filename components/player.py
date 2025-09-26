@@ -1,10 +1,16 @@
 import streamlit as st
 import time
 
+def set_volume():
+    """Callback to set volume from the slider.
+    This ensures the volume state is updated before any potential reruns.
+    """
+    st.session_state.volume = st.session_state.volume_slider # Sync the main volume state
+    st.session_state.audio_manager.set_volume(st.session_state.volume)
+
 def render_player():
     """Render the music player component"""
-    st.subheader("🎵 Music Player")
-    
+
     if not st.session_state.current_track:
         st.info("No track selected. Search for music or select from your library.")
         return
@@ -18,83 +24,79 @@ def render_player():
         next_track(autoplay=True) # Move to next track
         st.rerun()
     
-    # Track information
-    col1, col2 = st.columns([1, 3])
-    
-    with col1:
-        album_art_url = track.get('album_art') or track.get('thumbnail')
-        if album_art_url:
-            st.image(album_art_url, width=100)
-        else:
-            st.markdown("### 🎵")
-    
-    with col2:
-        st.markdown(f"**{track.get('title', 'Unknown Title')}**")
-        st.markdown(f"*{track.get('artist', 'Unknown Artist')}*")
-    
-    # Player controls
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    with col1:
+    # --- Vertical Layout for Sidebar ---
+
+    # Album Art and Track Info
+    album_art_url = track.get('album_art') or track.get('thumbnail')
+    if album_art_url:
+        st.image(album_art_url)
+    st.markdown(f"**{track.get('title', 'Unknown Title')}**")
+    st.caption(f"*{track.get('artist', 'Unknown Artist')}*")
+
+    # Main Player Controls (above progress bar)
+    _, c1, c2, c3, _ = st.columns([1.5, 1, 1, 1, 1.5])
+    with c1:
         if st.button("⏮️", help="Previous track"):
             previous_track()
-    
-    with col2:
+    with c2:
         if st.session_state.is_playing:
             if st.button("⏸️", help="Pause"):
                 pause_track()
         else:
             if st.button("▶️", help="Play"):
                 play_track(resume=True)
-    
-    with col3:
+    with c3:
         if st.button("⏭️", help="Next track"):
             next_track()
-    
-    with col4:
-        if st.button("🔀", help="Shuffle"):
-            shuffle_playlist()
-    
-    with col5:
-        repeat_mode = st.session_state.get('repeat_mode', 'off')
-        repeat_icons = {'off': '🔁', 'playlist': '🔁', 'track': '🔂'}
-        repeat_colors = {'off': 'grey', 'playlist': 'green', 'track': 'green'}
-        st.markdown(f"""
-        <div style="text-align: center; font-size: 24px; color: {repeat_colors[repeat_mode]};">
-            {repeat_icons[repeat_mode]}
-        </div>
-        """, unsafe_allow_html=True)
-        if st.button("Repeat", key="repeat_button_hidden", help="Toggle Repeat (Off -> Playlist -> Track)"):
-            toggle_repeat()
-    
+
     # Progress bar and seeking
     position = audio_manager.get_position()
     duration_ms = audio_manager.get_duration()
 
     if duration_ms > 0:
-        # Display timestamps
-        current_time_str = format_duration(position * duration_ms)
-        total_time_str = format_duration(duration_ms)
-        
         # Use a slider for seeking
         new_position = st.slider(
             "Track Progress", 0.0, 1.0, position,
             label_visibility="collapsed", key="seek_slider",
             on_change=lambda: audio_manager.set_position(st.session_state.seek_slider)
         )
-        
-        st.markdown(f"<div style='display: flex; justify-content: space-between; font-size: 0.9em; color: grey;'><p>{current_time_str}</p><p>{total_time_str}</p></div>", unsafe_allow_html=True)
-
         if abs(new_position - position) > 0.01 and not st.session_state.is_playing:
             audio_manager.set_position(new_position)
             st.rerun()
+        
+        # Timestamps
+        current_time_str = format_duration(position * duration_ms)
+        total_time_str = format_duration(duration_ms)
+        st.caption(f"{current_time_str} / {total_time_str}")
+
     else:
         st.progress(0)
 
+    # Secondary Controls (Shuffle/Repeat) and Volume
+    c1, c2, c3 = st.columns([1, 1, 3])
+    with c1:
+        if st.button("🔀", help="Shuffle"):
+            shuffle_playlist()
+    with c2:
+        repeat_mode = st.session_state.get('repeat_mode', 'off')
+        repeat_icons = {'off': '🔁', 'playlist': '🔁', 'track': '🔂'}
+        if st.button(repeat_icons[repeat_mode], help="Toggle Repeat (Off -> Playlist -> Track)"):
+            toggle_repeat()
+    
+    with c3:
+        # Wrap slider in a div with a custom class to target with CSS
+        st.markdown('<div class="volume-slider-container">', unsafe_allow_html=True)
+        st.slider(
+            "Volume", 0.0, 1.0, st.session_state.volume, 0.05,
+            on_change=set_volume,
+            key="volume_slider",
+            label_visibility="collapsed"
+        )
+        st.markdown('</div>', unsafe_allow_html=True)
+
     # To make the progress bar and seeking feel "live", force a rerun if playing.
     if st.session_state.is_playing:
-        time.sleep(0.5) # Update roughly twice a second
-        st.rerun()
+        st.rerun() # Reruns to update the progress bar
     
     # Playlist queue
     if st.session_state.current_playlist:

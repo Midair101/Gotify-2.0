@@ -104,19 +104,15 @@ def display_search_results(results):
 def display_track_card(track, source):
     """Display individual track card with play and add options"""
     
-    with st.container():
+    with st.container(border=True):
         col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
         
         with col1:
             st.markdown(f"**{track.get('title', 'Unknown Title')}**")
             st.markdown(f"*{track.get('artist', 'Unknown Artist')}*")
             if track.get('album'):
-                st.markdown(f"Album: {track.get('album')}")
-            
-            # Source badge
-            source_emoji = "🎵" if source == "spotify" else "📺"
-            st.markdown(f"{source_emoji} {source.title()}")
-        
+                st.caption(f"Album: {track.get('album')}")
+
         with col2:
             duration = track.get('duration', 'Unknown')
             if isinstance(duration, int):
@@ -136,8 +132,6 @@ def display_track_card(track, source):
                 # Set the track to be added in session state to show the form
                 st.session_state.track_to_add = track.get('id', hash(str(track)))
                 st.rerun()
-        
-        st.divider()
 
     # If a track is selected to be added, show the form
     if st.session_state.get('track_to_add') == track.get('id', hash(str(track))):
